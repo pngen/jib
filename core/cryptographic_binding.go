@@ -96,7 +96,10 @@ func (mt *MerkleTree) GetRoot() string {
 
 // GetProof gets a Merkle proof for a specific leaf.
 func (mt *MerkleTree) GetProof(leafIndex int) []string {
-	if len(mt.Tree) == 0 || leafIndex >= len(mt.Leaves) {
+	mt.mu.RLock()
+	defer mt.mu.RUnlock()
+
+	if len(mt.Tree) == 0 || leafIndex < 0 || leafIndex >= len(mt.Leaves) {
 		return []string{}
 	}
 
@@ -122,6 +125,7 @@ func (mt *MerkleTree) rebuildTree() {
 		return
 	}
 
+	mt.Tree = make([][]string, 0)
 	currentLevel := append(make([]string, 0), mt.Leaves...)
 	mt.Tree = append(mt.Tree, currentLevel)
 
@@ -135,7 +139,7 @@ func (mt *MerkleTree) rebuildTree() {
 			} else {
 				right = left
 			}
-			combined := fmt.Sprintf("%x", sha256.Sum256([]byte(left + right)))
+			combined := fmt.Sprintf("%x", sha256.Sum256([]byte(left+right)))
 			nextLevel = append(nextLevel, combined)
 		}
 		currentLevel = nextLevel
@@ -145,17 +149,17 @@ func (mt *MerkleTree) rebuildTree() {
 
 // ThresholdSignature allows multiple parties to jointly sign a binding.
 type ThresholdSignature struct {
-	Threshold   int
+	Threshold    int
 	TotalParties int
-	Signers     map[string]ed25519.PublicKey
+	Signers      map[string]ed25519.PublicKey
 }
 
 // NewThresholdSignature creates a new instance of ThresholdSignature.
 func NewThresholdSignature(threshold, totalParties int) *ThresholdSignature {
 	return &ThresholdSignature{
-		Threshold:   threshold,
+		Threshold:    threshold,
 		TotalParties: totalParties,
-		Signers:     make(map[string]ed25519.PublicKey),
+		Signers:      make(map[string]ed25519.PublicKey),
 	}
 }
 

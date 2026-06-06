@@ -9,13 +9,13 @@ import (
 
 // ProvenanceNode represents a node in provenance graph.
 type ProvenanceNode struct {
-	ID              string
-	ArtifactID      string
-	Operation       string // "read", "write", "transform", "transmit"
-	JurisdictionID  string
-	Timestamp       int64
-	ParentNodes     []string // IDs of input provenance nodes
-	Metadata        map[string]interface{}
+	ID             string
+	ArtifactID     string
+	Operation      string // "read", "write", "transform", "transmit"
+	JurisdictionID string
+	Timestamp      int64
+	ParentNodes    []string // IDs of input provenance nodes
+	Metadata       map[string]interface{}
 }
 
 // NewProvenanceNode creates a new instance of ProvenanceNode.
@@ -71,6 +71,8 @@ func (pg *ProvenanceGraph) AddNode(node *ProvenanceNode) {
 // TraceLineage traces full lineage back to source.
 func (pg *ProvenanceGraph) TraceLineage(nodeID string) []*ProvenanceNode {
 	pg.mutex.RLock()
+	defer pg.mutex.RUnlock()
+
 	lineage := make([]*ProvenanceNode, 0)
 	visited := make(map[string]bool)
 
@@ -235,13 +237,13 @@ func (dft *DataFlowTracker) RecordDataFlow(
 
 	// Record the flow
 	flowRecord := map[string]interface{}{
-		"node_id":              nodeID,
-		"artifact_id":          artifactID,
-		"operation":            operation,
-		"source_jurisdiction":  sourceJurisdiction,
-		"target_jurisdiction":  targetJurisdiction,
-		"timestamp":            ts,
-		"cross_boundary":       sourceJurisdiction != targetJurisdiction,
+		"node_id":             nodeID,
+		"artifact_id":         artifactID,
+		"operation":           operation,
+		"source_jurisdiction": sourceJurisdiction,
+		"target_jurisdiction": targetJurisdiction,
+		"timestamp":           ts,
+		"cross_boundary":      sourceJurisdiction != targetJurisdiction,
 	}
 
 	dft.FlowRecords = append(dft.FlowRecords, flowRecord)
@@ -269,9 +271,9 @@ func (dft *DataFlowTracker) GetFlowSummary() map[string]interface{} {
 	}
 
 	return map[string]interface{}{
-		"total_flows":           totalFlows,
-		"cross_boundary_flows":  crossBoundaryFlows,
-		"intra_boundary_flows":  totalFlows - crossBoundaryFlows,
+		"total_flows":          totalFlows,
+		"cross_boundary_flows": crossBoundaryFlows,
+		"intra_boundary_flows": totalFlows - crossBoundaryFlows,
 	}
 }
 
