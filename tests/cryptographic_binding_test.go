@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 	"time"
-	
+
 	"github.com/pngen/jib/core"
 )
 
@@ -90,6 +90,45 @@ func TestMerkleTree(t *testing.T) {
 	proof := mt.GetProof(0)
 	if len(proof) == 0 {
 		t.Error("Merkle tree proof should not be empty")
+	}
+}
+
+func TestMerkleTreeRebuildDoesNotKeepStaleLevels(t *testing.T) {
+	mt := core.NewMerkleTree()
+	mt.AddLeaf("hash1")
+	mt.AddLeaf("hash2")
+	mt.AddLeaf("hash3")
+
+	if len(mt.Tree) != 3 {
+		t.Fatalf("expected 3 Merkle levels for 3 leaves, got %d", len(mt.Tree))
+	}
+	if proof := mt.GetProof(-1); len(proof) != 0 {
+		t.Fatal("negative leaf index should return empty proof")
+	}
+}
+
+func TestBoundaryProofHashIncludesReasonAndEvidence(t *testing.T) {
+	proof := &core.BoundaryProof{
+		ID:             "proof-1",
+		ArtifactID:     "model-x",
+		SourceDomainID: "source",
+		TargetDomainID: "target",
+		JurisdictionID: "us-ca",
+		Allowed:        true,
+		Reason:         "original",
+		Timestamp:      123,
+		Evidence:       []string{"binding-1"},
+	}
+
+	originalHash := proof.Hash()
+	proof.Reason = "tampered"
+	if proof.Hash() == originalHash {
+		t.Fatal("proof reason changes must affect proof hash")
+	}
+	proof.Reason = "original"
+	proof.Evidence = append(proof.Evidence, "binding-2")
+	if proof.Hash() == originalHash {
+		t.Fatal("proof evidence changes must affect proof hash")
 	}
 }
 

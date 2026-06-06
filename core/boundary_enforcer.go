@@ -10,11 +10,11 @@ import (
 
 // BoundaryEnforcer enforces jurisdictional boundaries on intelligence execution.
 type BoundaryEnforcer struct {
-	Jurisdictions       map[string]*Jurisdiction
-	ExecutionDomains    map[string]*ExecutionDomain
-	BoundArtifacts      map[string][]*CryptographicBinding
-	Boundaries          map[string]*Boundary
-	mu               	sync.RWMutex
+	Jurisdictions    map[string]*Jurisdiction
+	ExecutionDomains map[string]*ExecutionDomain
+	BoundArtifacts   map[string][]*CryptographicBinding
+	Boundaries       map[string]*Boundary
+	mu               sync.RWMutex
 }
 
 // NewBoundaryEnforcer creates a new instance of BoundaryEnforcer.
@@ -60,6 +60,20 @@ func (be *BoundaryEnforcer) BindArtifactToJurisdiction(
 	be.mu.Lock()
 	defer be.mu.Unlock()
 
+	if artifactID == "" || artifactHash == "" {
+		return nil, &InvalidJurisdictionBinding{
+			JIBError: JIBError{Message: "artifact ID and artifact hash are required"},
+		}
+	}
+	if len(privateKey) != ed25519.PrivateKeySize {
+		return nil, &InvalidJurisdictionBinding{
+			JIBError: JIBError{Message: "invalid Ed25519 private key"},
+		}
+	}
+	if bindingType == "" {
+		bindingType = DefaultBindingType
+	}
+
 	if _, exists := be.Jurisdictions[jurisdictionID]; !exists {
 		return nil, &InvalidJurisdictionBinding{
 			JIBError: JIBError{Message: fmt.Sprintf("jurisdiction %s not registered", jurisdictionID)},
@@ -71,14 +85,14 @@ func (be *BoundaryEnforcer) BindArtifactToJurisdiction(
 
 	binding := &CryptographicBinding{
 		ID:                 bindingID,
-		ArtifactID:            artifactID,
-		JurisdictionID:        jurisdictionID,
-		BindingType:           bindingType,
-		SignatureAlgorithm:    "Ed25519",
-		PublicKey:             privateKey.Public().(ed25519.PublicKey),
-		Signature:             []byte{},
-		ArtifactHash:          artifactHash,
-		Timestamp:             timestamp,
+		ArtifactID:         artifactID,
+		JurisdictionID:     jurisdictionID,
+		BindingType:        bindingType,
+		SignatureAlgorithm: "Ed25519",
+		PublicKey:          privateKey.Public().(ed25519.PublicKey),
+		Signature:          []byte{},
+		ArtifactHash:       artifactHash,
+		Timestamp:          timestamp,
 	}
 
 	canonical := binding.CanonicalForm()
@@ -131,12 +145,24 @@ func (be *BoundaryEnforcer) CheckBoundary(
 		}
 	}
 
-	artifactJurisdictions := be.ResolveJurisdictionForArtifact(artifactID)
+	bindings, exists := be.BoundArtifacts[artifactID]
+	if !exists || len(bindings) == 0 {
+		return nil, &InvalidJurisdictionBinding{
+			JIBError: JIBError{Message: fmt.Sprintf("artifact %s has no jurisdiction bindings", artifactID)},
+		}
+	}
+
 	found := false
-	for _, jurisdictionID := range artifactJurisdictions {
-		if jurisdictionID == sourceDomain.JurisdictionID {
+	evidence := []string{}
+	for _, binding := range bindings {
+		if binding.JurisdictionID == sourceDomain.JurisdictionID {
+			if !binding.Verify() {
+				return nil, &InvalidJurisdictionBinding{
+					JIBError: JIBError{Message: fmt.Sprintf("binding %s failed cryptographic verification", binding.ID)},
+				}
+			}
 			found = true
-			break
+			evidence = append(evidence, binding.ID)
 		}
 	}
 	if !found {
@@ -166,15 +192,15 @@ func (be *BoundaryEnforcer) CheckBoundary(
 	}
 
 	return &BoundaryProof{
-		ID:                 fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf("%s:%s:%s", artifactID, sourceDomainID, targetDomainID)))),
-		ArtifactID:         artifactID,
-		SourceDomainID:     sourceDomainID,
-		TargetDomainID:     targetDomainID,
-		JurisdictionID:     sourceDomain.JurisdictionID,
-		Allowed:            allowed,
-		Reason:             reason,
-		Timestamp:      	time.Now().Unix(),
-		Evidence:           []string{},
+		ID:             fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf("%s:%s:%s", artifactID, sourceDomainID, targetDomainID)))),
+		ArtifactID:     artifactID,
+		SourceDomainID: sourceDomainID,
+		TargetDomainID: targetDomainID,
+		JurisdictionID: sourceDomain.JurisdictionID,
+		Allowed:        allowed,
+		Reason:         reason,
+		Timestamp:      time.Now().Unix(),
+		Evidence:       evidence,
 	}, nil
 }
 

@@ -2,6 +2,7 @@ package tests
 
 import (
 	"testing"
+	"time"
 
 	"github.com/pngen/jib/core"
 )
@@ -87,6 +88,41 @@ func TestProvenanceGraph(t *testing.T) {
 	}
 	if crossings[0][0] != "us-ca" || crossings[0][1] != "us-tx" {
 		t.Error("Crossing should be from us-ca to us-tx")
+	}
+}
+
+func TestTraceLineageReleasesReadLock(t *testing.T) {
+	graph := core.NewProvenanceGraph()
+	graph.AddNode(core.NewProvenanceNode(
+		"node-1",
+		"artifact-1",
+		"read",
+		"us-ca",
+		1,
+		[]string{},
+		map[string]interface{}{},
+	))
+
+	_ = graph.TraceLineage("node-1")
+
+	done := make(chan struct{})
+	go func() {
+		graph.AddNode(core.NewProvenanceNode(
+			"node-2",
+			"artifact-1",
+			"write",
+			"us-ca",
+			2,
+			[]string{"node-1"},
+			map[string]interface{}{},
+		))
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("TraceLineage held the read lock after returning")
 	}
 }
 

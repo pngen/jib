@@ -11,9 +11,9 @@ import (
 type JurisdictionType string
 
 const (
-	SOVEREIGN     JurisdictionType = "sovereign"
-	LEGAL         JurisdictionType = "legal"
-	REGULATORY    JurisdictionType = "regulatory"
+	SOVEREIGN  JurisdictionType = "sovereign"
+	LEGAL      JurisdictionType = "legal"
+	REGULATORY JurisdictionType = "regulatory"
 )
 
 // BindingType constants
@@ -21,19 +21,19 @@ const DefaultBindingType = "static"
 
 // Jurisdiction represents a legally or sovereignly defined execution domain.
 type Jurisdiction struct {
-	ID          string
-	Name        string
-	Type        JurisdictionType
-	ParentID    *string
-	Attributes  map[string]interface{}
+	ID         string
+	Name       string
+	Type       JurisdictionType
+	ParentID   *string
+	Attributes map[string]interface{}
 }
 
 // ExecutionDomain represents a concrete environment where intelligence runs.
 type ExecutionDomain struct {
-	ID              string
-	Name            string
-	JurisdictionID  string
-	Metadata        map[string]interface{}
+	ID             string
+	Name           string
+	JurisdictionID string
+	Metadata       map[string]interface{}
 }
 
 // Boundary represents a hard constraint preventing cross-domain execution or data flow.
@@ -112,9 +112,19 @@ type BoundaryProof struct {
 
 // Hash returns SHA256 hash of the proof for Merkle tree.
 func (bp *BoundaryProof) Hash() string {
-	data := fmt.Sprintf("%s:%s:%s:%s:%t:%d",
-		bp.ID, bp.ArtifactID, bp.SourceDomainID, bp.TargetDomainID, bp.Allowed, bp.Timestamp)
-	return fmt.Sprintf("%x", sha256.Sum256([]byte(data)))
+	data := map[string]interface{}{
+		"allowed":          bp.Allowed,
+		"artifact_id":      bp.ArtifactID,
+		"evidence":         bp.Evidence,
+		"id":               bp.ID,
+		"jurisdiction_id":  bp.JurisdictionID,
+		"reason":           bp.Reason,
+		"source_domain_id": bp.SourceDomainID,
+		"target_domain_id": bp.TargetDomainID,
+		"timestamp":        bp.Timestamp,
+	}
+	bytes, _ := json.Marshal(data)
+	return fmt.Sprintf("%x", sha256.Sum256(bytes))
 }
 
 // JIBError is the base exception for JIB errors.

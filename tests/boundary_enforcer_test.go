@@ -166,6 +166,39 @@ func TestCheckBoundaryAllowed(t *testing.T) {
 	}
 }
 
+func TestCheckBoundaryRejectsTamperedBinding(t *testing.T) {
+	enforcer := core.NewBoundaryEnforcer()
+
+	enforcer.RegisterJurisdiction(&core.Jurisdiction{ID: "us-ca", Name: "California", Type: core.SOVEREIGN})
+	enforcer.RegisterJurisdiction(&core.Jurisdiction{ID: "us-tx", Name: "Texas", Type: core.SOVEREIGN})
+	enforcer.RegisterExecutionDomain(&core.ExecutionDomain{ID: "prod-us-west", Name: "Production US West", JurisdictionID: "us-ca"})
+	enforcer.RegisterExecutionDomain(&core.ExecutionDomain{ID: "prod-us-east", Name: "Production US East", JurisdictionID: "us-tx"})
+
+	binding, err := enforcer.BindArtifactToJurisdiction(
+		"model-x",
+		"us-ca",
+		SamplePrivateKey(),
+		"abc123def456",
+		"static",
+	)
+	if err != nil {
+		t.Fatalf("Failed to bind artifact: %v", err)
+	}
+	binding.Signature[0] ^= 0xff
+
+	enforcer.RegisterBoundary(&core.Boundary{
+		ID:                   "ca-to-tx",
+		SourceJurisdictionID: "us-ca",
+		TargetJurisdictionID: "us-tx",
+		Allowed:              true,
+		Reason:               "Explicitly allowed by policy",
+	})
+
+	if _, err := enforcer.CheckBoundary("model-x", "prod-us-west", "prod-us-east"); err == nil {
+		t.Fatal("tampered binding should fail closed")
+	}
+}
+
 func TestCheckBoundaryDenied(t *testing.T) {
 	enforcer := core.NewBoundaryEnforcer()
 
