@@ -56,15 +56,33 @@ func NewProvenanceGraph() *ProvenanceGraph {
 
 // AddNode adds provenance node to graph.
 func (pg *ProvenanceGraph) AddNode(node *ProvenanceNode) {
+	if node == nil || node.ID == "" {
+		return
+	}
 	pg.mutex.Lock()
 	defer pg.mutex.Unlock()
 
-	pg.Nodes[node.ID] = node
-	for _, parentID := range node.ParentNodes {
+	// Provenance entries are immutable. Reusing an ID must not overwrite the
+	// original node while leaving stale edges behind.
+	if _, exists := pg.Nodes[node.ID]; exists {
+		return
+	}
+	stored := cloneProvenanceNode(node)
+	pg.Nodes[stored.ID] = stored
+	for _, parentID := range stored.ParentNodes {
 		if _, exists := pg.Edges[parentID]; !exists {
 			pg.Edges[parentID] = make([]string, 0)
 		}
-		pg.Edges[parentID] = append(pg.Edges[parentID], node.ID)
+		alreadyLinked := false
+		for _, childID := range pg.Edges[parentID] {
+			if childID == stored.ID {
+				alreadyLinked = true
+				break
+			}
+		}
+		if !alreadyLinked {
+			pg.Edges[parentID] = append(pg.Edges[parentID], stored.ID)
+		}
 	}
 }
 
@@ -84,7 +102,7 @@ func (pg *ProvenanceGraph) TraceLineage(nodeID string) []*ProvenanceNode {
 		visited[currentID] = true
 
 		if node, exists := pg.Nodes[currentID]; exists {
-			lineage = append(lineage, node)
+			lineage = append(lineage, cloneProvenanceNode(node))
 			for _, parentID := range node.ParentNodes {
 				dfs(parentID)
 			}
@@ -97,18 +115,33 @@ func (pg *ProvenanceGraph) TraceLineage(nodeID string) []*ProvenanceNode {
 
 // FindBoundaryCrossings finds all jurisdiction boundary crossings in lineage.
 func (pg *ProvenanceGraph) FindBoundaryCrossings(nodeID string) []BoundaryCrossing {
-	lineage := pg.TraceLineage(nodeID)
+	pg.mutex.RLock()
+	defer pg.mutex.RUnlock()
+
 	crossings := make([]BoundaryCrossing, 0)
+	visitedEdges := make(map[[2]string]bool)
 
-	// lineage is [child, ..., parent], so walk it backwards to emit parent -> child crossings.
-	for i := len(lineage) - 1; i > 0; i-- {
-		from := lineage[i]
-		to := lineage[i-1]
-
-		if from.JurisdictionID != to.JurisdictionID {
-			crossings = append(crossings, BoundaryCrossing{from.JurisdictionID, to.JurisdictionID})
+	var walk func(string)
+	walk = func(childID string) {
+		child, exists := pg.Nodes[childID]
+		if !exists {
+			return
+		}
+		for _, parentID := range child.ParentNodes {
+			edge := [2]string{parentID, childID}
+			if visitedEdges[edge] {
+				continue
+			}
+			visitedEdges[edge] = true
+			if parent, exists := pg.Nodes[parentID]; exists {
+				if parent.JurisdictionID != child.JurisdictionID {
+					crossings = append(crossings, BoundaryCrossing{parent.JurisdictionID, child.JurisdictionID})
+				}
+				walk(parentID)
+			}
 		}
 	}
+	walk(nodeID)
 
 	return crossings
 }
@@ -145,6 +178,9 @@ func (pg *ProvenanceGraph) GetJurisdictionSummary(nodeID string) map[string]int 
 
 // ValidateAcyclicity validates that the graph is acyclic.
 func (pg *ProvenanceGraph) ValidateAcyclicity() bool {
+	pg.mutex.RLock()
+	defer pg.mutex.RUnlock()
+
 	visited := make(map[string]bool)
 	recStack := make(map[string]bool)
 
@@ -192,6 +228,8 @@ func (pg *ProvenanceGraph) ValidateAcyclicity() bool {
 type DataFlowTracker struct {
 	Graph       *ProvenanceGraph
 	FlowRecords []map[string]interface{}
+	sequence    uint64
+	mutex       sync.RWMutex
 }
 
 // NewDataFlowTracker creates a new instance of DataFlowTracker.
@@ -217,8 +255,13 @@ func (dft *DataFlowTracker) RecordDataFlow(
 		ts = time.Now().Unix()
 	}
 
-	// Create provenance node for this operation
-	nodeID := fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf("%s:%s:%s:%s:%d", artifactID, operation, sourceJurisdiction, targetJurisdiction, ts))))
+	dft.mutex.Lock()
+	defer dft.mutex.Unlock()
+	dft.sequence++
+
+	// The sequence prevents distinct events in the same second from collapsing
+	// to one graph node while retaining the caller-supplied event timestamp.
+	nodeID := fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf("%s:%s:%s:%s:%d:%d", artifactID, operation, sourceJurisdiction, targetJurisdiction, ts, dft.sequence))))
 
 	node := NewProvenanceNode(
 		nodeID,
@@ -251,10 +294,13 @@ func (dft *DataFlowTracker) RecordDataFlow(
 
 // GetCrossBoundaryFlows gets all cross-boundary data flows.
 func (dft *DataFlowTracker) GetCrossBoundaryFlows() []map[string]interface{} {
+	dft.mutex.RLock()
+	defer dft.mutex.RUnlock()
+
 	crossBoundary := make([]map[string]interface{}, 0)
 	for _, record := range dft.FlowRecords {
 		if record["cross_boundary"].(bool) {
-			crossBoundary = append(crossBoundary, record)
+			crossBoundary = append(crossBoundary, cloneFlowRecord(record))
 		}
 	}
 	return crossBoundary
@@ -262,6 +308,9 @@ func (dft *DataFlowTracker) GetCrossBoundaryFlows() []map[string]interface{} {
 
 // GetFlowSummary gets summary of all recorded flows.
 func (dft *DataFlowTracker) GetFlowSummary() map[string]interface{} {
+	dft.mutex.RLock()
+	defer dft.mutex.RUnlock()
+
 	totalFlows := len(dft.FlowRecords)
 	crossBoundaryFlows := 0
 	for _, record := range dft.FlowRecords {
@@ -279,15 +328,51 @@ func (dft *DataFlowTracker) GetFlowSummary() map[string]interface{} {
 
 // AuditCompliance audits compliance for a specific jurisdiction.
 func (dft *DataFlowTracker) AuditCompliance(jurisdictionID string) []map[string]interface{} {
+	dft.mutex.RLock()
+	defer dft.mutex.RUnlock()
+
 	relevantFlows := make([]map[string]interface{}, 0)
 
 	for _, record := range dft.FlowRecords {
 		sourceJID := record["source_jurisdiction"].(string)
 		targetJID := record["target_jurisdiction"].(string)
 		if sourceJID == jurisdictionID || targetJID == jurisdictionID {
-			relevantFlows = append(relevantFlows, record)
+			relevantFlows = append(relevantFlows, cloneFlowRecord(record))
 		}
 	}
 
 	return relevantFlows
+}
+
+func cloneProvenanceNode(node *ProvenanceNode) *ProvenanceNode {
+	if node == nil {
+		return nil
+	}
+	return &ProvenanceNode{
+		ID:             node.ID,
+		ArtifactID:     node.ArtifactID,
+		Operation:      node.Operation,
+		JurisdictionID: node.JurisdictionID,
+		Timestamp:      node.Timestamp,
+		ParentNodes:    append([]string(nil), node.ParentNodes...),
+		Metadata:       cloneFlowRecord(node.Metadata),
+	}
+}
+
+func cloneFlowRecord(record map[string]interface{}) map[string]interface{} {
+	if record == nil {
+		return nil
+	}
+	cloned := make(map[string]interface{}, len(record))
+	for key, value := range record {
+		switch typed := value.(type) {
+		case []string:
+			cloned[key] = append([]string(nil), typed...)
+		case map[string]interface{}:
+			cloned[key] = cloneFlowRecord(typed)
+		default:
+			cloned[key] = value
+		}
+	}
+	return cloned
 }

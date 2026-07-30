@@ -1,5 +1,7 @@
 package core
 
+import "sort"
+
 // BoundaryExpression abstract base for composable boundary expressions.
 type BoundaryExpression interface {
 	Evaluate(context map[string]interface{}) bool
@@ -143,12 +145,12 @@ func (nb *NotBoundary) Not() *NotBoundary {
 
 // PolicyNode represents node in policy tree for hierarchical policy management.
 type PolicyNode struct {
-	ID          string
-	Name        string
-	Expression  BoundaryExpression
-	ParentID    *string
-	Version     string
-	Children    []*PolicyNode
+	ID         string
+	Name       string
+	Expression BoundaryExpression
+	ParentID   *string
+	Version    string
+	Children   []*PolicyNode
 }
 
 // NewPolicyNode creates a new instance of PolicyNode.
@@ -166,12 +168,12 @@ func NewPolicyNode(
 		version = parentIDAndVersion[1]
 	}
 	return &PolicyNode{
-		ID:          id,
-		Name:        name,
-		Expression:  expression,
-		ParentID:    parentID,
-		Version:     version,
-		Children:    make([]*PolicyNode, 0),
+		ID:         id,
+		Name:       name,
+		Expression: expression,
+		ParentID:   parentID,
+		Version:    version,
+		Children:   make([]*PolicyNode, 0),
 	}
 }
 
@@ -182,18 +184,32 @@ func (pn *PolicyNode) AddChild(child *PolicyNode) {
 
 // Evaluate evaluates this policy and all children.
 func (pn *PolicyNode) Evaluate(context map[string]interface{}) bool {
-	result := pn.Expression.Evaluate(context)
+	return pn.evaluate(context, make(map[*PolicyNode]bool))
+}
 
-	// If this is an AND policy, all children must also be true
-	if _, ok := pn.Expression.(*AndBoundary); ok {
-		for _, child := range pn.Children {
-			if !child.Evaluate(context) {
-				return false
-			}
-		}
+func (pn *PolicyNode) evaluate(context map[string]interface{}, active map[*PolicyNode]bool) bool {
+	if pn == nil || pn.Expression == nil {
+		return false
+	}
+	if active[pn] {
+		return false
+	}
+	active[pn] = true
+	defer delete(active, pn)
+	result := pn.Expression.Evaluate(context)
+	if !result {
+		return false
 	}
 
-	return result
+	// Child policies are inherited constraints regardless of the concrete
+	// expression type used by the parent. Ignoring a child deny would be a
+	// silent hierarchy bypass.
+	for _, child := range pn.Children {
+		if child == nil || !child.evaluate(context, active) {
+			return false
+		}
+	}
+	return true
 }
 
 // PolicyManager manages hierarchical policies and policy composition.
@@ -212,6 +228,9 @@ func NewPolicyManager() *PolicyManager {
 
 // AddPolicy adds a policy to the manager.
 func (pm *PolicyManager) AddPolicy(policy *PolicyNode) {
+	if policy == nil || policy.ID == "" || policy.Expression == nil {
+		return
+	}
 	pm.Policies[policy.ID] = policy
 
 	if policy.ParentID != nil {
@@ -244,8 +263,32 @@ func (pm *PolicyManager) GetPolicyTree() map[string][]string {
 // FindConflicts finds conflicting policies in the system.
 func (pm *PolicyManager) FindConflicts() []map[string]interface{} {
 	conflicts := make([]map[string]interface{}, 0)
-	// Simple conflict detection - check for overlapping boundaries
-	// In a real implementation, this would be more sophisticated
+	policyIDs := make([]string, 0, len(pm.Policies))
+	for policyID := range pm.Policies {
+		policyIDs = append(policyIDs, policyID)
+	}
+	sort.Strings(policyIDs)
+
+	type atomicDecision struct {
+		policyID string
+		allowed  bool
+	}
+	seen := make(map[string]atomicDecision)
+	for _, policyID := range policyIDs {
+		policy := pm.Policies[policyID]
+		atomic, ok := policy.Expression.(*AtomicBoundary)
+		if !ok || atomic == nil || atomic.BoundaryID == "" {
+			continue
+		}
+		if previous, exists := seen[atomic.BoundaryID]; exists && previous.allowed != atomic.Allowed {
+			conflicts = append(conflicts, map[string]interface{}{
+				"boundary_id": atomic.BoundaryID,
+				"policy_ids":  []string{previous.policyID, policyID},
+			})
+			continue
+		}
+		seen[atomic.BoundaryID] = atomicDecision{policyID: policyID, allowed: atomic.Allowed}
+	}
 	return conflicts
 }
 
@@ -275,8 +318,8 @@ func NewPolicySimulator() *PolicySimulator {
 // AddTestCase adds a test case for policy evaluation.
 func (ps *PolicySimulator) AddTestCase(context map[string]interface{}, expectedResult bool) {
 	ps.TestCases = append(ps.TestCases, map[string]interface{}{
-		"context":    context,
-		"expected":   expectedResult,
+		"context":  context,
+		"expected": expectedResult,
 	})
 }
 
@@ -292,11 +335,11 @@ func (ps *PolicySimulator) RunSimulation(policy BoundaryExpression) []map[string
 		passed := actual == expected
 
 		result := map[string]interface{}{
-			"test_id":   i,
-			"context":   context,
-			"expected":  expected,
-			"actual":    actual,
-			"passed":    passed,
+			"test_id":  i,
+			"context":  context,
+			"expected": expected,
+			"actual":   actual,
+			"passed":   passed,
 		}
 
 		results = append(results, result)

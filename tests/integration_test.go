@@ -44,7 +44,6 @@ func TestEmitAndGetProof(t *testing.T) {
 
 	// Create proof
 	proof := &core.BoundaryProof{
-		ID:             "proof-123",
 		ArtifactID:     "model-x",
 		SourceDomainID: "prod-us-west",
 		TargetDomainID: "dev-us-east",
@@ -54,17 +53,18 @@ func TestEmitAndGetProof(t *testing.T) {
 		Timestamp:      1234567890,
 		Evidence:       []string{},
 	}
+	proof.ID = proof.Hash()
 
 	// Emit proof
 	adapter.EmitProof(proof)
 
 	// Retrieve proof
-	retrieved := adapter.GetProof("proof-123")
+	retrieved := adapter.GetProof(proof.ID)
 
 	if retrieved == nil {
 		t.Error("Should retrieve proof")
 	}
-	if retrieved.ID != "proof-123" {
+	if retrieved.ID != proof.ID {
 		t.Error("Proof ID mismatch")
 	}
 	if retrieved.ArtifactID != "model-x" {

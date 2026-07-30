@@ -98,10 +98,15 @@ func TestSMTEncoder(t *testing.T) {
 	encoder := core.NewSMTEncoder()
 	encoder.AddConstraint("forall x: allowed(x) -> jurisdiction(x) == source_jurisdiction")
 
-	// Should not raise
+	// Unsupported formulas must fail closed until backed by a real solver.
 	result := encoder.Solve()
-	if !result {
-		t.Error("SMT solver should return true")
+	if result {
+		t.Error("unsupported SMT formula must not be reported satisfiable")
+	}
+	verified := core.NewSMTEncoder()
+	verified.AddConstraint("true")
+	if !verified.Solve() {
+		t.Error("explicit true constraint should be satisfiable")
 	}
 }
 
@@ -116,11 +121,17 @@ func TestModelChecker(t *testing.T) {
 	if len(results) != 2 {
 		t.Error("Should have two properties verified")
 	}
-	if !results["safety"] {
-		t.Error("Safety property should be verified")
+	if results["safety"] {
+		t.Error("unsupported safety property must not be reported verified")
 	}
-	if !results["liveness"] {
-		t.Error("Liveness property should be verified")
+	if results["liveness"] {
+		t.Error("unsupported liveness property must not be reported verified")
+	}
+
+	checker.AddProperty("literal", "true")
+	verifiedLiteral, err := checker.VerifyProperty("literal")
+	if err != nil || !verifiedLiteral {
+		t.Fatalf("explicit true property should verify: value=%v err=%v", verifiedLiteral, err)
 	}
 }
 

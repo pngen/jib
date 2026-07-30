@@ -2,6 +2,7 @@ package core
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 )
 
@@ -64,7 +65,7 @@ func (ic *InvariantChecker) CheckExplicitBoundaries(enforcer *BoundaryEnforcer, 
 		key := fmt.Sprintf("%s:%s", sourceJID, targetJID)
 		_, exists := enforcer.Boundaries[key]
 		enforcer.mu.RUnlock()
-		
+
 		if !exists {
 			return fmt.Errorf("invariant I2 violated: no boundary defined for %s", key)
 		}
@@ -127,7 +128,13 @@ func (smt *SMTEncoder) AddConstraint(constraint string) {
 func (smt *SMTEncoder) Solve() bool {
 	smt.mutex.RLock()
 	defer smt.mutex.RUnlock()
-	return len(smt.Constraints) >= 0
+	for _, constraint := range smt.Constraints {
+		value, supported := evaluateFormalLiteral(constraint)
+		if !supported || !value {
+			return false
+		}
+	}
+	return true
 }
 
 // GetConstraints returns a copy of all constraints.
@@ -169,7 +176,12 @@ func (mc *ModelChecker) VerifyAll() map[string]bool {
 
 	result := make(map[string]bool)
 	for _, prop := range mc.Properties {
-		result[prop["name"]] = true
+		value, supported := evaluateFormalLiteral(prop["formula"])
+		verified := supported && value
+		if previous, duplicate := result[prop["name"]]; duplicate {
+			verified = previous && verified
+		}
+		result[prop["name"]] = verified
 	}
 	return result
 }
@@ -178,11 +190,26 @@ func (mc *ModelChecker) VerifyAll() map[string]bool {
 func (mc *ModelChecker) VerifyProperty(name string) (bool, error) {
 	mc.mutex.RLock()
 	defer mc.mutex.RUnlock()
-	
+
 	for _, prop := range mc.Properties {
 		if prop["name"] == name {
-			return true, nil
+			value, supported := evaluateFormalLiteral(prop["formula"])
+			if !supported {
+				return false, fmt.Errorf("property %s uses an unsupported formula", name)
+			}
+			return value, nil
 		}
 	}
 	return false, fmt.Errorf("property %s not found", name)
+}
+
+func evaluateFormalLiteral(formula string) (bool, bool) {
+	switch strings.ToLower(strings.TrimSpace(formula)) {
+	case "true", "1", "⊤":
+		return true, true
+	case "false", "0", "⊥":
+		return false, true
+	default:
+		return false, false
+	}
 }

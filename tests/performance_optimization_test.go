@@ -51,6 +51,7 @@ func TestLRUCache(t *testing.T) {
 
 func TestOptimizedEnforcer(t *testing.T) {
 	enforcer := core.NewOptimizedBoundaryEnforcer()
+	enforcer.RegisterJurisdiction(map[string]interface{}{"id": "us-ca"})
 
 	// Test binding caching
 	binding1 := enforcer.BindArtifactToJurisdiction("model-x", "us-ca")
@@ -104,7 +105,7 @@ func TestBatchOperations(t *testing.T) {
 		"name": "California",
 	}
 	domain := map[string]interface{}{
-		"id":             "prod-us-west",
+		"id":              "prod-us-west",
 		"jurisdiction_id": "us-ca",
 	}
 
@@ -139,6 +140,7 @@ func TestBatchOperations(t *testing.T) {
 
 func TestCacheEfficiency(t *testing.T) {
 	enforcer := core.NewOptimizedBoundaryEnforcer()
+	enforcer.RegisterJurisdiction(map[string]interface{}{"id": "us-ca"})
 
 	// Add some bindings
 	for i := 0; i < 10; i++ {

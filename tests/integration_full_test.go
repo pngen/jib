@@ -10,7 +10,8 @@ import (
 
 func TestFullEnforcementPipelineAllowed(t *testing.T) {
 	// Setup distributed system
-	enforcer := core.NewResearchGradeBoundaryEnforcer("node-1", []string{"node-2", "node-3"})
+	// No simulated peer may be counted as an affirmative consensus vote.
+	enforcer := core.NewResearchGradeBoundaryEnforcer("node-1", []string{})
 
 	// Register jurisdictions
 	usCa := &core.Jurisdiction{
