@@ -174,7 +174,7 @@ func TestCheckBoundaryRejectsTamperedBinding(t *testing.T) {
 	enforcer.RegisterExecutionDomain(&core.ExecutionDomain{ID: "prod-us-west", Name: "Production US West", JurisdictionID: "us-ca"})
 	enforcer.RegisterExecutionDomain(&core.ExecutionDomain{ID: "prod-us-east", Name: "Production US East", JurisdictionID: "us-tx"})
 
-	binding, err := enforcer.BindArtifactToJurisdiction(
+	_, err := enforcer.BindArtifactToJurisdiction(
 		"model-x",
 		"us-ca",
 		SamplePrivateKey(),
@@ -184,7 +184,9 @@ func TestCheckBoundaryRejectsTamperedBinding(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to bind artifact: %v", err)
 	}
-	binding.Signature[0] ^= 0xff
+	// Tamper the authoritative stored envelope directly; mutating the returned
+	// binding no longer aliases internal enforcement state.
+	enforcer.BoundArtifacts["model-x"][0].Signature[0] ^= 0xff
 
 	enforcer.RegisterBoundary(&core.Boundary{
 		ID:                   "ca-to-tx",

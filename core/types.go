@@ -3,8 +3,11 @@ package core
 import (
 	"crypto/ed25519"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"sort"
+	"strings"
 )
 
 // JurisdictionType represents type of jurisdiction.
@@ -70,31 +73,95 @@ type CryptographicBinding struct {
 	Timestamp          int64
 }
 
+type canonicalBinding struct {
+	ID                   string `json:"id"`
+	ArtifactID           string `json:"artifact_id"`
+	JurisdictionID       string `json:"jurisdiction_id"`
+	BindingType          string `json:"binding_type"`
+	SignatureAlgorithm   string `json:"signature_algorithm"`
+	PublicKey            string `json:"public_key"`
+	PublicKeyFingerprint string `json:"public_key_fingerprint"`
+	ArtifactHash         string `json:"artifact_hash"`
+	Timestamp            int64  `json:"timestamp"`
+}
+
+func (cb *CryptographicBinding) validateUnsigned() error {
+	if cb == nil {
+		return fmt.Errorf("binding is nil")
+	}
+	if strings.TrimSpace(cb.ID) == "" {
+		return fmt.Errorf("binding ID is required")
+	}
+	if strings.TrimSpace(cb.ArtifactID) == "" {
+		return fmt.Errorf("artifact ID is required")
+	}
+	if strings.TrimSpace(cb.JurisdictionID) == "" {
+		return fmt.Errorf("jurisdiction ID is required")
+	}
+	if strings.TrimSpace(cb.BindingType) == "" {
+		return fmt.Errorf("binding type is required")
+	}
+	if cb.SignatureAlgorithm != "Ed25519" {
+		return fmt.Errorf("unsupported signature algorithm %q", cb.SignatureAlgorithm)
+	}
+	if len(cb.PublicKey) != ed25519.PublicKeySize {
+		return fmt.Errorf("invalid Ed25519 public key length: %d", len(cb.PublicKey))
+	}
+	if strings.TrimSpace(cb.ArtifactHash) == "" {
+		return fmt.Errorf("artifact hash is required")
+	}
+	if cb.Timestamp <= 0 {
+		return fmt.Errorf("binding timestamp must be positive")
+	}
+	return nil
+}
+
+func (cb *CryptographicBinding) canonicalPayload() canonicalBinding {
+	publicKeyHash := sha256.Sum256(cb.PublicKey)
+	return canonicalBinding{
+		ID:                   cb.ID,
+		ArtifactID:           cb.ArtifactID,
+		JurisdictionID:       cb.JurisdictionID,
+		BindingType:          cb.BindingType,
+		SignatureAlgorithm:   cb.SignatureAlgorithm,
+		PublicKey:            hex.EncodeToString(cb.PublicKey),
+		PublicKeyFingerprint: hex.EncodeToString(publicKeyHash[:]),
+		ArtifactHash:         cb.ArtifactHash,
+		Timestamp:            cb.Timestamp,
+	}
+}
+
 // Verify cryptographically verifies binding integrity.
 func (cb *CryptographicBinding) Verify() bool {
-	if cb.PublicKey == nil || len(cb.Signature) == 0 {
+	if cb.validateUnsigned() != nil || len(cb.Signature) != ed25519.SignatureSize {
 		return false
 	}
-	canonical := cb.CanonicalForm()
-	return ed25519.Verify(cb.PublicKey, []byte(canonical), cb.Signature)
+	return ed25519.Verify(cb.PublicKey, []byte(cb.CanonicalForm()), cb.Signature)
 }
 
 // CanonicalForm returns deterministic serialization for signing.
 func (cb *CryptographicBinding) CanonicalForm() string {
-	data := map[string]interface{}{
-		"artifact_hash":   cb.ArtifactHash,
-		"artifact_id":     cb.ArtifactID,
-		"binding_type":    cb.BindingType,
-		"jurisdiction_id": cb.JurisdictionID,
-		"timestamp":       cb.Timestamp,
+	if cb == nil {
+		return ""
 	}
-	bytes, _ := json.Marshal(data)
+	bytes, _ := json.Marshal(cb.canonicalPayload())
 	return string(bytes)
 }
 
 // Hash returns SHA256 hash of the binding for Merkle tree.
 func (cb *CryptographicBinding) Hash() string {
-	return fmt.Sprintf("%x", sha256.Sum256([]byte(cb.CanonicalForm())))
+	if cb == nil {
+		return ""
+	}
+	envelope := struct {
+		Payload   canonicalBinding `json:"payload"`
+		Signature string           `json:"signature"`
+	}{
+		Payload:   cb.canonicalPayload(),
+		Signature: hex.EncodeToString(cb.Signature),
+	}
+	bytes, _ := json.Marshal(envelope)
+	return fmt.Sprintf("%x", sha256.Sum256(bytes))
 }
 
 // BoundaryProof represents a machine-verifiable explanation of why execution was permitted or denied.
@@ -112,16 +179,29 @@ type BoundaryProof struct {
 
 // Hash returns SHA256 hash of the proof for Merkle tree.
 func (bp *BoundaryProof) Hash() string {
-	data := map[string]interface{}{
-		"allowed":          bp.Allowed,
-		"artifact_id":      bp.ArtifactID,
-		"evidence":         bp.Evidence,
-		"id":               bp.ID,
-		"jurisdiction_id":  bp.JurisdictionID,
-		"reason":           bp.Reason,
-		"source_domain_id": bp.SourceDomainID,
-		"target_domain_id": bp.TargetDomainID,
-		"timestamp":        bp.Timestamp,
+	if bp == nil {
+		return ""
+	}
+	evidence := append([]string{}, bp.Evidence...)
+	sort.Strings(evidence)
+	data := struct {
+		ArtifactID     string   `json:"artifact_id"`
+		SourceDomainID string   `json:"source_domain_id"`
+		TargetDomainID string   `json:"target_domain_id"`
+		JurisdictionID string   `json:"jurisdiction_id"`
+		Allowed        bool     `json:"allowed"`
+		Reason         string   `json:"reason"`
+		Timestamp      int64    `json:"timestamp"`
+		Evidence       []string `json:"evidence"`
+	}{
+		ArtifactID:     bp.ArtifactID,
+		SourceDomainID: bp.SourceDomainID,
+		TargetDomainID: bp.TargetDomainID,
+		JurisdictionID: bp.JurisdictionID,
+		Allowed:        bp.Allowed,
+		Reason:         bp.Reason,
+		Timestamp:      bp.Timestamp,
+		Evidence:       evidence,
 	}
 	bytes, _ := json.Marshal(data)
 	return fmt.Sprintf("%x", sha256.Sum256(bytes))
