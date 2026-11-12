@@ -299,6 +299,27 @@ func (obe *OptimizedBoundaryEnforcer) RegisterBoundary(boundary interface{}) {
 
 	key := [2]string{source, target}
 
+	// Conflicting rules resolve as in BoundaryEnforcer: a deny can replace an
+	// allow, but an allow can never overwrite an existing deny for the route,
+	// and a deny cannot be taken off its route by registering its ID again.
+	if existingRaw, exists := obe.BoundaryIndex[key]; exists {
+		if existing, valid := existingRaw.(map[string]interface{}); valid {
+			if existingAllowed, allowedOK := existing["allowed"].(bool); allowedOK && !existingAllowed && allowed {
+				return
+			}
+		}
+	}
+	if existingRaw, exists := obe.Boundaries[boundaryID]; exists {
+		if existing, valid := existingRaw.(map[string]interface{}); valid {
+			oldSource, sourceOK := requiredOptimizedString(existing, "source_jurisdiction_id")
+			oldTarget, targetOK := requiredOptimizedString(existing, "target_jurisdiction_id")
+			existingAllowed, allowedOK := existing["allowed"].(bool)
+			if sourceOK && targetOK && allowedOK && !existingAllowed && ([2]string{oldSource, oldTarget}) != key {
+				return
+			}
+		}
+	}
+
 	// Keep the ID and route indexes one-to-one. Re-registering either an ID
 	// or a route replaces the previous entry without leaving a stale alias.
 	if existingRaw, exists := obe.Boundaries[boundaryID]; exists {

@@ -240,6 +240,42 @@ func TestOptimizedEnforcerRequiresBindingAndInvalidatesCachedAllow(t *testing.T)
 	}
 }
 
+func TestOptimizedEnforcerAllowCannotOverwriteDeny(t *testing.T) {
+	optimized := core.NewOptimizedBoundaryEnforcer()
+	for _, jurisdictionID := range []string{"source-j", "target-j", "other-j"} {
+		optimized.RegisterJurisdiction(map[string]interface{}{"id": jurisdictionID})
+	}
+	optimized.RegisterExecutionDomain(map[string]interface{}{"id": "source-d", "jurisdiction_id": "source-j"})
+	optimized.RegisterExecutionDomain(map[string]interface{}{"id": "target-d", "jurisdiction_id": "target-j"})
+	if optimized.BindArtifactToJurisdiction("artifact", "source-j") == nil {
+		t.Fatal("valid optimized binding should be created")
+	}
+	deny := func(id, target string) map[string]interface{} {
+		return map[string]interface{}{
+			"id": id, "source_jurisdiction_id": "source-j", "target_jurisdiction_id": target,
+			"allowed": false, "reason": "denied",
+		}
+	}
+	lateAllow := map[string]interface{}{
+		"id": "allow", "source_jurisdiction_id": "source-j", "target_jurisdiction_id": "target-j",
+		"allowed": true, "reason": "late allow",
+	}
+
+	optimized.RegisterBoundary(deny("deny", "target-j"))
+	optimized.RegisterBoundary(lateAllow)
+	if optimized.CheckBoundary("artifact", "source-d", "target-d")["allowed"].(bool) {
+		t.Fatal("allow registered after deny must not escalate on the optimized path")
+	}
+
+	// Re-pointing the deny's ID at another route must not free the denied route
+	// for a later allow either.
+	optimized.RegisterBoundary(deny("deny", "other-j"))
+	optimized.RegisterBoundary(lateAllow)
+	if optimized.CheckBoundary("artifact", "source-d", "target-d")["allowed"].(bool) {
+		t.Fatal("a deny must stay on its route when its ID is registered again")
+	}
+}
+
 func TestDistributedEnforcerDoesNotFabricatePeerVotes(t *testing.T) {
 	enforcer := core.NewDistributedBoundaryEnforcer("node-1", []string{"node-2", "node-3"})
 	decision, err := enforcer.ProposeBoundaryDecisionWithDecision("artifact", "source", "target", true)
