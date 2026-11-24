@@ -329,6 +329,78 @@ func TestPolicyHierarchyEnforcesChildDenyAndReportsConflict(t *testing.T) {
 	}
 }
 
+func TestRevocationIsNotPostponedByALaterRevocation(t *testing.T) {
+	revoker := core.NewBindingRevocation()
+	revoker.RevokeBinding("binding", 100)
+	// A second revocation dated later must not make the binding valid again
+	// for the time in between.
+	revoker.RevokeBinding("binding", 500)
+	if !revoker.IsRevoked("binding", 200) {
+		t.Fatal("a later revocation postponed an earlier one")
+	}
+	revoker.RevokeBinding("binding", 50)
+	if !revoker.IsRevoked("binding", 60) {
+		t.Fatal("an earlier revocation must take effect")
+	}
+}
+
+func TestExecutionDomainJurisdictionCannotBeChangedAfterRegistration(t *testing.T) {
+	enforcer, _ := configuredBaseEnforcer(t, false)
+	enforcer.RegisterBoundary(&core.Boundary{
+		ID: "local", SourceJurisdictionID: "source-j", TargetJurisdictionID: "source-j",
+		Allowed: true, Reason: "local execution",
+	})
+	if err := enforcer.EnforceBoundary("artifact", "source-d", "target-d"); err == nil {
+		t.Fatal("test setup: the crossing must be denied")
+	}
+	// Re-registering the target domain under the source jurisdiction would
+	// turn the denied crossing into an allowed local execution.
+	enforcer.RegisterExecutionDomain(&core.ExecutionDomain{ID: "target-d", Name: "Target Domain", JurisdictionID: "source-j"})
+	if err := enforcer.EnforceBoundary("artifact", "source-d", "target-d"); err == nil {
+		t.Fatal("re-registering a domain must not move it to another jurisdiction")
+	}
+
+	optimized := core.NewOptimizedBoundaryEnforcer()
+	optimized.RegisterJurisdiction(map[string]interface{}{"id": "source-j"})
+	optimized.RegisterJurisdiction(map[string]interface{}{"id": "target-j"})
+	optimized.RegisterExecutionDomain(map[string]interface{}{"id": "source-d", "jurisdiction_id": "source-j"})
+	optimized.RegisterExecutionDomain(map[string]interface{}{"id": "target-d", "jurisdiction_id": "target-j"})
+	optimized.RegisterBoundary(map[string]interface{}{
+		"id": "local", "source_jurisdiction_id": "source-j", "target_jurisdiction_id": "source-j",
+		"allowed": true, "reason": "local execution",
+	})
+	if optimized.BindArtifactToJurisdiction("artifact", "source-j") == nil {
+		t.Fatal("bind artifact")
+	}
+	optimized.RegisterExecutionDomain(map[string]interface{}{"id": "target-d", "jurisdiction_id": "source-j"})
+	if optimized.CheckBoundary("artifact", "source-d", "target-d")["allowed"].(bool) {
+		t.Fatal("re-registering an optimized domain must not move it to another jurisdiction")
+	}
+}
+
+func TestPolicyManagerEnforcesChildrenDeclaredByParentID(t *testing.T) {
+	manager := core.NewPolicyManager()
+	manager.AddPolicy(core.NewPolicyNode("parent", "Parent", core.NewAtomicBoundary("route", true)))
+	manager.AddPolicy(core.NewPolicyNode("child", "Child", core.NewAtomicBoundary("child-route", false), "parent"))
+	if manager.EvaluatePolicy("parent", nil) {
+		t.Fatal("a child deny declared through its parent ID must constrain the parent")
+	}
+
+	allowing := core.NewPolicyManager()
+	allowing.AddPolicy(core.NewPolicyNode("parent", "Parent", core.NewAtomicBoundary("route", true)))
+	allowing.AddPolicy(core.NewPolicyNode("child", "Child", core.NewAtomicBoundary("child-route", true), "parent"))
+	if !allowing.EvaluatePolicy("parent", nil) {
+		t.Fatal("an allowing child must not deny its parent")
+	}
+
+	cyclic := core.NewPolicyManager()
+	cyclic.AddPolicy(core.NewPolicyNode("a", "A", core.NewAtomicBoundary("route", true), "b"))
+	cyclic.AddPolicy(core.NewPolicyNode("b", "B", core.NewAtomicBoundary("route", true), "a"))
+	if cyclic.EvaluatePolicy("a", nil) {
+		t.Fatal("a cyclic policy hierarchy must fail closed")
+	}
+}
+
 func TestCRDTBoundaryConflictConvergesFailClosed(t *testing.T) {
 	allow := core.NewCRDTManager()
 	deny := core.NewCRDTManager()

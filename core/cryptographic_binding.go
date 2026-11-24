@@ -343,6 +343,11 @@ func (br *BindingRevocation) RevokeBinding(bindingID string, timestamp int64) {
 	if br.RevokedBindings == nil {
 		br.RevokedBindings = make(map[string]int64)
 	}
+	// Revocation is permanent from its earliest recorded time. A later
+	// revocation of the same binding must not move that time forward.
+	if existing, exists := br.RevokedBindings[bindingID]; exists && existing <= timestamp {
+		return
+	}
 	br.RevokedBindings[bindingID] = timestamp
 }
 

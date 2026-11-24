@@ -198,6 +198,15 @@ func (obe *OptimizedBoundaryEnforcer) RegisterExecutionDomain(domain interface{}
 	if !obe.hasRegisteredJurisdictionLocked(jurisdictionID) {
 		return
 	}
+	// A domain's jurisdiction is fixed when it is registered. Moving it at
+	// runtime would change which boundary rules apply to it.
+	if existingRaw, exists := obe.ExecutionDomains[domainID]; exists {
+		if existing, valid := existingRaw.(map[string]interface{}); valid {
+			if existingJurisdictionID, ok := requiredOptimizedString(existing, "jurisdiction_id"); ok && existingJurisdictionID != jurisdictionID {
+				return
+			}
+		}
+	}
 
 	stored := cloneOptimizedMap(domainMap)
 	stored["id"] = domainID

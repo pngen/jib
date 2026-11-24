@@ -243,12 +243,32 @@ func (pm *PolicyManager) AddPolicy(policy *PolicyNode) {
 
 // EvaluatePolicy evaluates a specific policy.
 func (pm *PolicyManager) EvaluatePolicy(policyID string, context map[string]interface{}) bool {
+	return pm.evaluatePolicy(policyID, context, make(map[string]bool))
+}
+
+func (pm *PolicyManager) evaluatePolicy(policyID string, context map[string]interface{}, active map[string]bool) bool {
 	policy, exists := pm.Policies[policyID]
 	if !exists {
 		return false // Policy not found
 	}
+	if active[policyID] {
+		return false // Cyclic hierarchy
+	}
+	active[policyID] = true
+	defer delete(active, policyID)
 
-	return policy.Evaluate(context)
+	if !policy.Evaluate(context) {
+		return false
+	}
+
+	// A child declared through its ParentID is an inherited constraint exactly
+	// like a child attached with AddChild.
+	for _, childID := range pm.PolicyTree[policyID] {
+		if !pm.evaluatePolicy(childID, context, active) {
+			return false
+		}
+	}
+	return true
 }
 
 // GetPolicyTree gets the policy hierarchy tree.

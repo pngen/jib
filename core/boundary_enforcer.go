@@ -48,6 +48,11 @@ func (be *BoundaryEnforcer) RegisterExecutionDomain(domain *ExecutionDomain) {
 
 	be.mu.Lock()
 	defer be.mu.Unlock()
+	// A domain's jurisdiction is fixed when it is registered. Moving it at
+	// runtime would change which boundary rules apply to it.
+	if existing, exists := be.ExecutionDomains[domain.ID]; exists && existing != nil && existing.JurisdictionID != domain.JurisdictionID {
+		return
+	}
 	be.ExecutionDomains[domain.ID] = cloneExecutionDomain(domain)
 }
 
